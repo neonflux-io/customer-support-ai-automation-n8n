@@ -1,0 +1,16 @@
+{
+  "documents": [
+    {
+      "title": "Shipping Policy",
+      "content": "Standard shipping is 3-5 business days within the US and costs $4.99. Express shipping is 1-2 business days and costs $14.99. International shipping takes 7-14 business days. Free standard shipping is available on orders over $75. All orders are dispatched within 24 hours of purchase."
+    },
+    {
+      "title": "Refund Policy",
+      "content": "You may request a refund within 30 days of purchase. Refunds under $100 are processed automatically by our support team within 3-5 business days to the original payment method. Refunds of $100 or more require approval from a manager and may take up to 10 business days. Refunds are only issued for items in their original condition."
+    },
+    {
+      "title": "Pricing",
+      "content": "Our pricing starts at $9.99 per month for the Starter plan. The Pro plan is $29.99 per month and includes unlimited projects. The Enterprise plan is custom-priced and includes dedicated support, SSO and custom contracts. All plans include a 14-day free trial."
+    }
+  ]
+}

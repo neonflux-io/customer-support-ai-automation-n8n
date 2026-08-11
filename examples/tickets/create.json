@@ -1,0 +1,9 @@
+{
+  "action": "create",
+  "customer_id": "cus_1001",
+  "conversation_id": "conv_9001",
+  "subject": "Refund request above threshold",
+  "priority": "high",
+  "description": "Customer requests a $150 refund for order ORD-3001.",
+  "channel": "website"
+}

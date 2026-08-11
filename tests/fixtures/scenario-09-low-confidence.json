@@ -1,0 +1,10 @@
+{
+  "channel": "whatsapp",
+  "customer_id": "cus_scn_09",
+  "conversation_id": "conv_scn_09",
+  "message_id": "msg_scn_09",
+  "message": "thing",
+  "timestamp": "2026-01-15T10:10:00Z",
+  "customer": { "name": "Anonymous" },
+  "metadata": {}
+}

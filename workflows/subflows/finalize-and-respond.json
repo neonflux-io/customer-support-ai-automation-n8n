@@ -1,0 +1,379 @@
+{
+  "name": "AI Support - Finalize, Persist & Analytics",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-finalize-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Decide the final reply (automated answer vs human handoff), mark escalation\n// state and compute the outcome that is persisted and returned.\nconst env = $input.first().json;\nconst escalated = !!(env.escalation && env.escalation.requires_human);\n\nconst replyText = escalated\n  ? ((env.escalation && env.escalation.handoff_message) || 'Your request has been escalated to our human support team. A ticket has been created and someone will follow up soon.')\n  : ((env.response && env.response.text) || 'I apologize, but I could not generate a response. Our team has been notified.');\n\nconst resolution = escalated ? 'escalated' : (env.policy && env.policy.action === 'clarify' ? 'clarified' : 'automated');\n\nlet durationMs = null;\ntry {\n  const ts = new Date(env.timestamp);\n  if (!isNaN(ts.getTime())) durationMs = Date.now() - ts.getTime();\n} catch (e) {}\n\nconst finalize = {\n  reply: replyText,\n  requires_human: escalated,\n  escalated,\n  resolution,\n  validated: !!(env.validation && env.validation.valid),\n  rag_hit: !!(env.rag && env.rag.strong),\n  ticket_number: (env.escalation && env.escalation.ticket && env.escalation.ticket.ticket_number) || null,\n  duration_ms: durationMs,\n  intent: env.classification ? env.classification.intent : null,\n  confidence: env.classification ? env.classification.confidence : null,\n  sentiment: env.sentiment ? env.sentiment.sentiment : null,\n  priority: (env.policy && env.policy.priority) || (env.sentiment && env.sentiment.priority) || 'normal',\n  escalation_reason: (env.escalation && env.escalation.reason) || null\n};\n\nreturn [{ json: { ...env, finalize } }];"
+      },
+      "id": "sw-finalize-build-reply",
+      "name": "Build Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO messages (external_message_id, conversation_id, customer_id, channel, role, content, intent, confidence, sentiment, priority, requires_human, resolution, escalated, rag_hit, response_validated, metadata) VALUES ($1, $2::uuid, $3::uuid, $4, 'user', $5, $6, $7::numeric, $8, $9, $10::boolean, $11, $12::boolean, $13::boolean, $14::boolean, $15::jsonb) ON CONFLICT (external_message_id, channel) DO UPDATE SET content = EXCLUDED.content, updated_at = now() RETURNING id;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $('Build Reply').first().json.message_id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.conversation.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.customer.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.source }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.message }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.intent }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.confidence }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.sentiment }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.priority }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.requires_human }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.resolution }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.escalated }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.rag_hit }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.validated }}"
+            },
+            {
+              "value": "={{ JSON.stringify($('Build Reply').first().json.metadata) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-finalize-insert-user-message",
+      "name": "Insert User Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO messages (external_message_id, conversation_id, customer_id, channel, role, content, intent, confidence, sentiment, priority, requires_human, resolution, escalated, rag_hit, response_validated, metadata) VALUES ($1, $2::uuid, $3::uuid, $4, 'assistant', $5, $6, $7::numeric, $8, $9, $10::boolean, $11, $12::boolean, $13::boolean, $14::boolean, $15::jsonb) ON CONFLICT (external_message_id, channel) DO UPDATE SET content = EXCLUDED.content, updated_at = now() RETURNING id;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $('Build Reply').first().json.message_id }}_assistant"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.conversation.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.customer.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.source }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.reply }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.intent }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.confidence }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.sentiment }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.priority }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.requires_human }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.resolution }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.escalated }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.rag_hit }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.validated }}"
+            },
+            {
+              "value": "={{ JSON.stringify($('Build Reply').first().json.metadata) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-finalize-insert-assistant-message",
+      "name": "Insert Assistant Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE conversations SET message_count = message_count + 2, last_message_at = now(), status = $1, updated_at = now() WHERE id = $2 RETURNING id;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.escalated ? 'pending' : 'open' }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.conversation.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-finalize-update-conversation",
+      "name": "Update Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1020, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE idempotency_keys SET status = 'completed', payload = $2::jsonb WHERE key = $1 RETURNING key;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $('Build Reply').first().json.idempotency_key }}"
+            },
+            {
+              "value": "={{ JSON.stringify({ reply: $('Build Reply').first().json.finalize.reply, ticket_number: $('Build Reply').first().json.finalize.ticket_number, escalated: $('Build Reply').first().json.finalize.escalated }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-finalize-complete-idempotency",
+      "name": "Complete Idempotency Key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1280, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO analytics_events (event_type, channel, conversation_id, customer_id, intent, sentiment, priority, requires_human, rag_hit, response_validated, escalation_reason, duration_ms, status, metadata) VALUES ('message_processed', $1, $2::uuid, $3::uuid, $4, $5, $6, $7::boolean, $8::boolean, $9::boolean, $10, $11, $12, $13::jsonb);",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $('Build Reply').first().json.source }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.conversation.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.customer.id }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.intent }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.sentiment }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.priority }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.requires_human }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.rag_hit }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.validated }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.escalation_reason }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.duration_ms }}"
+            },
+            {
+              "value": "={{ $('Build Reply').first().json.finalize.escalated ? 'escalated' : 'success' }}"
+            },
+            {
+              "value": "={{ JSON.stringify($('Build Reply').first().json.metadata) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-finalize-insert-analytics",
+      "name": "Insert Analytics Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1540, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Build the final API response returned to the channel.\nconst env = $('Build Reply').first().json;\nconst f = env.finalize;\nreturn [{\n  json: {\n    success: true,\n    source: env.source,\n    message_id: env.message_id,\n    conversation_id: env.conversation_id,\n    customer_id: env.customer_id,\n    reply: f.reply,\n    intent: f.intent,\n    confidence: f.confidence,\n    sentiment: f.sentiment,\n    priority: f.priority,\n    requires_human: f.requires_human,\n    escalated: f.escalated,\n    ticket_number: f.ticket_number,\n    ticket_status: f.escalated ? 'open' : null,\n    validated: f.validated\n  }\n}];"
+      },
+      "id": "sw-finalize-output",
+      "name": "Output Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Build Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reply": {
+      "main": [
+        [
+          {
+            "node": "Insert User Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert User Message": {
+      "main": [
+        [
+          {
+            "node": "Insert Assistant Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Assistant Message": {
+      "main": [
+        [
+          {
+            "node": "Update Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation": {
+      "main": [
+        [
+          {
+            "node": "Complete Idempotency Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Idempotency Key": {
+      "main": [
+        [
+          {
+            "node": "Insert Analytics Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Analytics Event": {
+      "main": [
+        [
+          {
+            "node": "Output Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-finalize-v1"
+}

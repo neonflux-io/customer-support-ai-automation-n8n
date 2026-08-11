@@ -1,0 +1,10 @@
+{
+  "channel": "facebook",
+  "customer_id": "cus_scn_07",
+  "conversation_id": "conv_scn_07",
+  "message_id": "msg_scn_07",
+  "message": "I need to talk to a real human about a billing error. Can you connect me?",
+  "timestamp": "2026-01-15T10:00:00Z",
+  "customer": { "name": "Omar Haddad" },
+  "metadata": { "billing": true }
+}

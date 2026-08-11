@@ -1,0 +1,15 @@
+{
+  "channel": "email",
+  "customer_id": "em_cus_7003",
+  "conversation_id": "em_conv_7003",
+  "message_id": "em_msg_5003",
+  "message": "Hello, my account has been locked and I cannot log in. Please help me reset it.",
+  "timestamp": "2026-01-15T10:15:00Z",
+  "customer": {
+    "name": "Sarah Chen",
+    "email": "sarah.chen@example.com"
+  },
+  "metadata": {
+    "email_thread": "ref:em-2026-0115-0003"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "channel": "instagram",
+  "customer_id": "ig_11223344",
+  "conversation_id": "ig_conv_7005",
+  "message_id": "ig_msg_5005",
+  "message": "Can you tell me the return window for shoes?",
+  "timestamp": "2026-01-15T10:45:00Z",
+  "customer": {
+    "name": "Lena Fischer"
+  },
+  "metadata": {
+    "post_id": "REELS_123",
+    "product": "running-shoes"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "channel": "website",
+  "customer_id": "cus_scn_05",
+  "conversation_id": "conv_scn_05",
+  "message_id": "msg_scn_05",
+  "message": "I want a full refund for my annual plan, that is unacceptable.",
+  "timestamp": "2026-01-15T09:50:00Z",
+  "customer": { "name": "Priya Nair" },
+  "metadata": { "refund_amount": 150 }
+}

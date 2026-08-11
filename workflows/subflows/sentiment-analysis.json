@@ -1,0 +1,113 @@
+{
+  "name": "AI Support - Sentiment & Priority",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-sentiment-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.CHAT_MODEL || 'gpt-4o-mini' }}",
+        "options": {
+          "temperature": 0.0
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "id": "sw-sentiment-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "prompt": "You are a sentiment and priority analysis system for a customer support automation. Be conservative: prefer lower priority when unsure.\n\nAnalyze the sentiment, priority and urgency of the following customer support message.\n\nRespond with STRICT JSON only. No markdown, no code fences, no extra text.\n\nReturn exactly these keys:\n- \"sentiment\": one of \"positive\",\"neutral\",\"negative\",\"angry\",\"frustrated\",\"urgent\"\n- \"priority\": one of \"low\",\"normal\",\"high\",\"critical\"\n- \"urgency\": number between 0 and 1\n- \"explanation\": one short sentence\n\nRules:\n- \"angry\" when the customer is hostile, swearing, or explicitly upset.\n- \"frustrated\" when the customer expresses strong displeasure or repeated failure.\n- \"urgent\" when there is a time-sensitive or safety/loss concern (e.g. money lost, account locked, data exposure).\n- Use \"critical\" priority only for severe issues (security, major financial loss, repeated angry complaints).\n\nMESSAGE:\n{{ $json.message }}\n\nINTENT: {{ $json.classification.intent }}\n\nCONVERSATION SUMMARY:\n{{ $json.memory && $json.memory.summary ? $json.memory.summary : '(none)' }}"
+      },
+      "id": "sw-sentiment-chain",
+      "name": "Analyze Sentiment & Priority",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Parse and validate the sentiment analysis output with deterministic fallbacks.\nconst envelope = $('When Called by Another Workflow').first().json;\nconst raw = ($input.first().json.output || '').trim();\n\nconst ALLOWED_SENTIMENTS = ['positive','neutral','negative','angry','frustrated','urgent'];\nconst ALLOWED_PRIORITIES = ['low','normal','high','critical'];\n\nfunction extractJson(text) {\n  if (!text) return null;\n  const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();\n  const start = cleaned.indexOf('{');\n  const end = cleaned.lastIndexOf('}');\n  if (start === -1 || end === -1 || end <= start) return null;\n  try { return JSON.parse(cleaned.slice(start, end + 1)); } catch (e) { return null; }\n}\n\nconst parsed = extractJson(raw);\nconst fallback = { sentiment: 'neutral', priority: 'normal', urgency: 0, explanation: '' };\n\nlet sentiment = parsed && typeof parsed.sentiment === 'string' ? parsed.sentiment.trim().toLowerCase() : fallback.sentiment;\nif (!ALLOWED_SENTIMENTS.includes(sentiment)) sentiment = fallback.sentiment;\n\nlet priority = parsed && typeof parsed.priority === 'string' ? parsed.priority.trim().toLowerCase() : fallback.priority;\nif (!ALLOWED_PRIORITIES.includes(priority)) priority = fallback.priority;\n\nlet urgency = parsed && Number(parsed.urgency);\nif (!Number.isFinite(urgency)) urgency = fallback.urgency;\nurgency = Math.max(0, Math.min(1, urgency));\n\nconst explanation = parsed && typeof parsed.explanation === 'string' ? parsed.explanation.slice(0, 200) : fallback.explanation;\n\nconst sentimentAnalysis = { sentiment, priority, urgency, explanation, raw };\nreturn [{ json: { ...envelope, sentiment: sentimentAnalysis } }];"
+      },
+      "id": "sw-sentiment-parse",
+      "name": "Parse Sentiment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Analyze Sentiment & Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Analyze Sentiment & Priority",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Sentiment & Priority": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-sentiment-analysis-v1"
+}

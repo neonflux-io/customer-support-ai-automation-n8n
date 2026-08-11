@@ -1,0 +1,87 @@
+{
+  "name": "AI Support - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "err-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Normalize the error payload produced by the Error Trigger so it can be\n// written to the analytics table in a structured way.\nconst e = $input.first().json;\nconst rawError = e && e.error;\nconst errorMessage = typeof rawError === 'string'\n  ? rawError\n  : (rawError && typeof rawError === 'object'\n      ? (rawError.message || JSON.stringify(rawError))\n      : JSON.stringify(rawError || 'unknown error'));\n\nreturn [{\n  json: {\n    workflow_id: (e && e.workflowId) || '',\n    workflow_name: (e && e.workflow && e.workflow.name) || (e && e.workflowName) || '',\n    last_node: (e && e.lastNodeExecuted) || '',\n    execution_id: (e && e.executionId) || '',\n    error_message: String(errorMessage).slice(0, 2000),\n    timestamp: (e && e.timestamp) || new Date().toISOString()\n  }\n}];"
+      },
+      "id": "err-normalize",
+      "name": "Normalize Error Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO analytics_events (event_type, status, error_message, metadata) VALUES ('workflow_error', 'error', $1, $2::jsonb);",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.error_message }}"
+            },
+            {
+              "value": "={{ JSON.stringify({ workflow_id: $json.workflow_id, workflow_name: $json.workflow_name, last_node: $json.last_node, execution_id: $json.execution_id }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "err-log",
+      "name": "Log Error to Analytics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Error Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Error Data": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "workflow-error-handler-v1"
+}

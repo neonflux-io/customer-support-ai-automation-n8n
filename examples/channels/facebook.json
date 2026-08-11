@@ -1,0 +1,15 @@
+{
+  "channel": "facebook",
+  "customer_id": "fb_44556677",
+  "conversation_id": "fb_conv_7006",
+  "message_id": "fb_msg_5006",
+  "message": "I need to talk to a real human about a billing error. Can you connect me?",
+  "timestamp": "2026-01-15T11:00:00Z",
+  "customer": {
+    "name": "Omar Haddad"
+  },
+  "metadata": {
+    "page_id": "mybrand-page",
+    "billing": true
+  }
+}

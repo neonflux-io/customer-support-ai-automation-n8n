@@ -1,0 +1,113 @@
+{
+  "name": "AI Support - Intent Classification",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-classify-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.CHAT_MODEL || 'gpt-4o-mini' }}",
+        "options": {
+          "temperature": 0.0
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "id": "sw-classify-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "prompt": "You are an intent classification system for a customer support automation. Be conservative with confidence when the intent is ambiguous.\n\nClassify the following customer support message.\n\nRespond with STRICT JSON only. No markdown, no code fences, no extra text.\n\nReturn exactly these keys:\n- \"intent\": one of \"greeting\",\"faq\",\"product_question\",\"pricing\",\"order_status\",\"order_issue\",\"payment_issue\",\"refund_request\",\"cancellation\",\"technical_support\",\"complaint\",\"account_issue\",\"shipping\",\"human_agent_request\",\"unknown\"\n- \"category\": a short human-readable category label\n- \"confidence\": number between 0 and 1\n- \"requires_human\": boolean\n\nRules:\n- Use \"human_agent_request\" when the customer explicitly asks to talk to a human.\n- Use \"unknown\" when the message is ambiguous; set confidence low (below 0.5).\n- For angry or frustrated complaints about orders/payments/refunds, prefer the specific intent over \"complaint\".\n\nMESSAGE:\n{{ $json.message }}\n\nCONVERSATION SUMMARY:\n{{ $json.memory && $json.memory.summary ? $json.memory.summary : '(none)' }}"
+      },
+      "id": "sw-classify-chain",
+      "name": "Classify Intent",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Parse and validate the LLM classification output with deterministic fallbacks.\nconst envelope = $('When Called by Another Workflow').first().json;\nconst raw = ($input.first().json.output || '').trim();\n\nconst ALLOWED_INTENTS = [\n  'greeting','faq','product_question','pricing','order_status','order_issue',\n  'payment_issue','refund_request','cancellation','technical_support','complaint',\n  'account_issue','shipping','human_agent_request','unknown'\n];\n\nfunction extractJson(text) {\n  if (!text) return null;\n  const cleaned = text\n    .replace(/```json/gi, '')\n    .replace(/```/g, '')\n    .trim();\n  const start = cleaned.indexOf('{');\n  const end = cleaned.lastIndexOf('}');\n  if (start === -1 || end === -1 || end <= start) return null;\n  try {\n    return JSON.parse(cleaned.slice(start, end + 1));\n  } catch (e) {\n    return null;\n  }\n}\n\nconst parsed = extractJson(raw);\nconst fallback = { intent: 'unknown', category: 'unknown', confidence: 0.3, requires_human: false };\n\nlet intent = parsed && typeof parsed.intent === 'string' ? parsed.intent.trim().toLowerCase() : fallback.intent;\nif (!ALLOWED_INTENTS.includes(intent)) intent = fallback.intent;\n\nlet confidence = parsed && Number(parsed.confidence);\nif (!Number.isFinite(confidence)) confidence = fallback.confidence;\nconfidence = Math.max(0, Math.min(1, confidence));\n\nlet requires_human = parsed ? Boolean(parsed.requires_human) : fallback.requires_human;\nconst category = parsed && typeof parsed.category === 'string' && parsed.category.trim()\n  ? parsed.category.trim().slice(0, 100)\n  : intent;\n\nconst classification = { intent, category, confidence, requires_human, raw };\nreturn [{ json: { ...envelope, classification } }];"
+      },
+      "id": "sw-classify-parse",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Intent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-intent-classification-v1"
+}

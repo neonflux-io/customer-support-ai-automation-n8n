@@ -1,0 +1,256 @@
+{
+  "name": "AI Support - Escalation & Ticket Creation",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-escalation-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Combine deterministic policy rules, AI classification and validation results\n// into a single escalation reason. Critical decisions are never LLM-only.\nconst envelope = $input.first().json;\nconst policy = envelope.policy || {};\nconst classification = envelope.classification || {};\nconst sentiment = envelope.sentiment || {};\nconst validation = envelope.validation || {};\n\nconst reasons = Array.isArray(policy.rules) ? policy.rules.slice() : [];\nif (classification.requires_human) reasons.push('human_request');\nif (Array.isArray(validation.issues) && validation.issues.length) reasons.push('response_validation_failed');\nif (policy.refund_above_threshold) reasons.push('refund_above_threshold');\nif (!reasons.length) reasons.push('manual_escalation');\n\nconst reason = reasons.join('|');\nconst subject = `[${(classification.intent || 'support').toUpperCase()}] ${(envelope.message || '').slice(0, 80)}`;\n\nreturn [{ json: { ...envelope, escalation_reason: reason, escalation_subject: subject } }];"
+      },
+      "id": "sw-escalation-reason",
+      "name": "Build Escalation Reason",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ticket_number, id, status, priority FROM tickets WHERE conversation_id = $1::uuid AND status IN ('open','pending','assigned') ORDER BY created_at DESC LIMIT 1;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.conversation.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-escalation-check-ticket",
+      "name": "Check Active Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The SELECT can return zero rows, so normalize to a single item with a flag.\nconst rows = $('Check Active Ticket').all().map(i => i.json);\nconst found = rows.length > 0 ? rows[0] : null;\nreturn [{ json: { ...$('Build Escalation Reason').first().json, active_ticket: found, ticket_found: !!found } }];"
+      },
+      "id": "sw-escalation-normalize",
+      "name": "Normalize Ticket Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-escalation-ticket-found",
+              "leftValue": "={{ $json.ticket_found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sw-escalation-ticket-exists",
+      "name": "Active Ticket Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1020, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (customer_id, conversation_id, subject, status, priority, intent, confidence, sentiment, ai_summary, escalation_reason, last_message) VALUES ($1::uuid, $2::uuid, $3, 'open', $4, $5, $6::numeric, $7, $8, $9, $10) RETURNING ticket_number, id, status, priority;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.customer.id }}"
+            },
+            {
+              "value": "={{ $json.conversation.id }}"
+            },
+            {
+              "value": "={{ $json.escalation_subject }}"
+            },
+            {
+              "value": "={{ $json.policy.priority }}"
+            },
+            {
+              "value": "={{ $json.classification.intent }}"
+            },
+            {
+              "value": "={{ $json.classification.confidence }}"
+            },
+            {
+              "value": "={{ $json.sentiment.sentiment }}"
+            },
+            {
+              "value": "={{ $json.memory.summary }}"
+            },
+            {
+              "value": "={{ $json.escalation_reason }}"
+            },
+            {
+              "value": "={{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-escalation-insert-ticket",
+      "name": "Insert Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1280, 260]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const base = $('Build Escalation Reason').first().json;\nconst ticket = $('Insert Ticket').first().json;\nconst priority = base.policy && base.policy.priority ? base.policy.priority : (ticket.priority || 'normal');\nconst sentiment = base.sentiment ? base.sentiment.sentiment : '';\n\nlet handoff = `Your request has been escalated to a human support agent. A ticket has been created${ticket ? ` (#${ticket.ticket_number})` : ''} and our team will follow up with you shortly.`;\nif (sentiment === 'angry' || sentiment === 'frustrated') {\n  handoff = `I'm really sorry you're having a frustrating experience. I've escalated your case${ticket ? ` (#${ticket.ticket_number})` : ''} to a human specialist who will take care of it right away.`;\n} else if (base.policy && base.policy.refund_above_threshold) {\n  handoff = `Your refund request has been forwarded for manual review${ticket ? ` (#${ticket.ticket_number})` : ''}. A specialist will review it and get back to you within 24 hours.`;\n}\n\nreturn [{ json: { ...base, policy: { ...(base.policy || {}), action: 'escalate', requires_human: true, priority }, escalation: { requires_human: true, reason: base.escalation_reason, ticket, handoff_message: handoff } } }];"
+      },
+      "id": "sw-escalation-output-new",
+      "name": "Escalation Output (New Ticket)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 260]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const base = $('Build Escalation Reason').first().json;\nconst ticket = $('Normalize Ticket Check').first().json.active_ticket;\nconst priority = base.policy && base.policy.priority ? base.policy.priority : (ticket.priority || 'normal');\nconst sentiment = base.sentiment ? base.sentiment.sentiment : '';\n\nlet handoff = `Your request is already being handled by our team${ticket ? ` (ticket #${ticket.ticket_number})` : ''}. A human agent will follow up with you shortly.`;\nif (sentiment === 'angry' || sentiment === 'frustrated') {\n  handoff = `I'm really sorry you're having a frustrating experience. Your case${ticket ? ` (#${ticket.ticket_number})` : ''} is already assigned to a human specialist.`;\n}\n\nreturn [{ json: { ...base, policy: { ...(base.policy || {}), action: 'escalate', requires_human: true, priority }, escalation: { requires_human: true, reason: base.escalation_reason, ticket, handoff_message: handoff } } }];"
+      },
+      "id": "sw-escalation-output-existing",
+      "name": "Escalation Output (Existing Ticket)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Build Escalation Reason",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Escalation Reason": {
+      "main": [
+        [
+          {
+            "node": "Check Active Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Active Ticket": {
+      "main": [
+        [
+          {
+            "node": "Normalize Ticket Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Ticket Check": {
+      "main": [
+        [
+          {
+            "node": "Active Ticket Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Active Ticket Exists?": {
+      "true": [
+        [
+          {
+            "node": "Escalation Output (Existing Ticket)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Insert Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Ticket": {
+      "main": [
+        [
+          {
+            "node": "Escalation Output (New Ticket)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-escalation-v1"
+}

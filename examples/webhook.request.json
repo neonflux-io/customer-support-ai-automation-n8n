@@ -1,0 +1,16 @@
+{
+  "channel": "website",
+  "customer_id": "cus_1001",
+  "conversation_id": "conv_9001",
+  "message_id": "msg_web_8001",
+  "message": "Hi, what is your shipping policy and how long does standard delivery take?",
+  "timestamp": "2026-01-15T09:30:00Z",
+  "customer": {
+    "name": "Alex Morgan",
+    "email": "alex.morgan@example.com"
+  },
+  "metadata": {
+    "order_id": "ORD-1001",
+    "utm_source": "google"
+  }
+}

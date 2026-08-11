@@ -1,0 +1,98 @@
+{
+  "name": "AI Support - Customer Lookup",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-customer-lookup-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO customers (external_id, name, email, channel, first_interaction_at, last_interaction_at, metadata) VALUES ($1, $2, $3, $4, now(), now(), $5::jsonb) ON CONFLICT (external_id, channel) DO UPDATE SET name = EXCLUDED.name, email = COALESCE(NULLIF(EXCLUDED.email, ''), customers.email), last_interaction_at = now(), updated_at = now() RETURNING id, external_id, name, email, channel, first_interaction_at, last_interaction_at, metadata::text;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.customer_id }}"
+            },
+            {
+              "value": "={{ $json.customer.name }}"
+            },
+            {
+              "value": "={{ $json.customer.email }}"
+            },
+            {
+              "value": "={{ $json.source }}"
+            },
+            {
+              "value": "={{ JSON.stringify($json.metadata) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-customer-lookup-upsert",
+      "name": "Upsert Customer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Merge the persisted customer record back into the normalized envelope.\n// Envelope fields are restored from the workflow trigger (they are replaced by\n// the Postgres node output inside this sub-workflow).\nconst envelope = $('When Called by Another Workflow').first().json;\nconst row = $input.first().json;\n\nlet metadata = row.metadata;\nif (typeof metadata === 'string') {\n  try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }\n}\n\nconst customer = {\n  id: row.id,\n  external_id: row.external_id,\n  name: row.name,\n  email: row.email,\n  channel: row.channel,\n  first_interaction_at: row.first_interaction_at,\n  last_interaction_at: row.last_interaction_at,\n  metadata\n};\n\nreturn [{ json: { ...envelope, customer } }];"
+      },
+      "id": "sw-customer-lookup-output",
+      "name": "Merge Customer Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Upsert Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Customer": {
+      "main": [
+        [
+          {
+            "node": "Merge Customer Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-customer-lookup-v1"
+}

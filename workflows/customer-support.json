@@ -1,0 +1,915 @@
+{
+  "name": "AI Customer Support - Main",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "={{ $env.WEBHOOK_PATH || 'customer-support' }}",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "main-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ============================================================\n// 1. VALIDATION & NORMALIZATION\n// Accepts: channel, customer_id, conversation_id, message_id,\n// message, timestamp, customer, metadata.\n// Normalizes any channel into: source, customer_id,\n// conversation_id, message_id, message, metadata.\n// ============================================================\nconst input = $input.first().json;\nconst payload = (input && input.body && typeof input.body === 'object' && !Array.isArray(input.body))\n  ? input.body\n  : input;\n\nconst errors = [];\n\n// --- channel validation + mapping -------------------------------\nconst channelMap = {\n  website: 'website', web: 'website', chat: 'website',\n  whatsapp: 'whatsapp', telegram: 'telegram', email: 'email',\n  slack: 'slack', instagram: 'instagram',\n  facebook: 'facebook', messenger: 'facebook', facebook_messenger: 'facebook'\n};\nlet source = '';\nconst rawChannel = payload && typeof payload.channel === 'string' ? payload.channel.trim().toLowerCase() : '';\nif (!rawChannel) {\n  errors.push('channel_required');\n} else if (channelMap[rawChannel]) {\n  source = channelMap[rawChannel];\n} else {\n  errors.push('invalid_channel');\n}\n\n// --- required identifiers ---------------------------------------\nconst requireId = (name) => {\n  const v = payload ? payload[name] : undefined;\n  if (v === undefined || v === null || String(v).trim() === '') errors.push(name + '_required');\n};\nrequireId('customer_id');\nrequireId('conversation_id');\nrequireId('message_id');\n\n// --- message validation -----------------------------------------\nlet message = '';\nif (!payload || typeof payload.message !== 'string') {\n  errors.push('message_required');\n} else {\n  message = payload.message;\n  if (message.trim() === '') errors.push('message_required');\n  else if (message.length > 4000) errors.push('message_too_long');\n}\n\n// --- timestamp validation ---------------------------------------\nlet timestamp = new Date().toISOString();\nif (payload && payload.timestamp !== undefined && payload.timestamp !== null && payload.timestamp !== '') {\n  const ts = new Date(payload.timestamp);\n  if (isNaN(ts.getTime())) errors.push('invalid_timestamp');\n  else timestamp = ts.toISOString();\n}\n\nif (errors.length) {\n  return [{ json: { valid: false, errors } }];\n}\n\n// ================================================================\n// SANITIZATION - treat all input as untrusted\n// ================================================================\nfunction sanitize(s, cap) {\n  let out = String(s == null ? '' : s);\n  out = out.replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]/g, '');\n  out = out.replace(/\\s+/g, ' ').trim();\n  if (cap && out.length > cap) out = out.slice(0, cap);\n  return out;\n}\n\nconst sanitizedMessage = sanitize(message, 4000)\n  .replace(/(sk-[A-Za-z0-9]{16,})|(AKIA[0-9A-Z]{16})|(xox[baprs]-[A-Za-z0-9-]{10,})|(ghp_[A-Za-z0-9]{20,})/g, '[REDACTED]');\n\nconst lowerMsg = sanitizedMessage.toLowerCase();\nconst injectionPatterns = [\n  'ignore previous', 'ignore all previous', 'ignore all instructions',\n  'you are now', 'system prompt', 'developer mode', 'reveal your',\n  'forget your instructions', 'jailbreak', 'what are your instructions',\n  'print your system', 'act as an unrestricted', 'disregard'\n];\nconst security_flags = injectionPatterns.filter(p => lowerMsg.includes(p));\n\nconst customer = (payload.customer && typeof payload.customer === 'object') ? payload.customer : {};\nconst metadata = (payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)) ? payload.metadata : {};\n\nconst envelope = {\n  valid: true,\n  errors: [],\n  source,\n  customer_id: sanitize(payload.customer_id, 255),\n  conversation_id: sanitize(payload.conversation_id, 255),\n  message_id: sanitize(payload.message_id, 255),\n  message: sanitizedMessage,\n  timestamp,\n  customer: {\n    name: typeof customer.name === 'string' ? sanitize(customer.name, 255) : '',\n    email: typeof customer.email === 'string' ? sanitize(customer.email, 320).toLowerCase() : ''\n  },\n  metadata,\n  security_flags\n};\n\nreturn [{ json: envelope }];"
+      },
+      "id": "main-validate",
+      "name": "Validate & Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-valid-request",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "main-valid-if",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: { code: 'validation_error', details: $json.errors } } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "main-respond-invalid",
+      "name": "Respond Invalid Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [780, -220]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ============================================================\n// 3. IDEMPOTENCY KEY\n// Deterministic key from message_id + source, plus an FNV-1a\n// content hash. Message IDs are validated upstream.\n// ============================================================\nconst env = $input.first().json;\nconst key = `${env.source}:${env.message_id}`;\n\nlet h = 2166136261;\nconst str = `${env.message}|${env.customer_id}|${env.conversation_id}|${env.timestamp}`;\nfor (let i = 0; i < str.length; i++) {\n  h ^= str.charCodeAt(i);\n  h = Math.imul(h, 16777619);\n}\nconst hash = (h >>> 0).toString(16);\n\nreturn [{ json: { ...env, idempotency_key: key, idempotency_hash: hash } }];"
+      },
+      "id": "main-idempotency-key",
+      "name": "Build Idempotency Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, status, payload FROM idempotency_keys WHERE key = $1 AND expires_at > now();",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.idempotency_key }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "main-idempotency-check",
+      "name": "Check Idempotency",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const rows = $('Check Idempotency').all().map(i => i.json);\nconst found = rows.length > 0 ? rows[0] : null;\nconst duplicate = !!(found && found.status === 'completed' && found.payload);\nreturn [{ json: { ...$('Build Idempotency Key').first().json, idempotency_check: found, duplicate } }];"
+      },
+      "id": "main-idempotency-normalize",
+      "name": "Normalize Idempotency Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-duplicate",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "main-duplicate-if",
+      "name": "Duplicate Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.idempotency_check.payload }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "main-respond-cached",
+      "name": "Respond Cached Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1820, -220]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO idempotency_keys (key, channel, message_id, hash, status, expires_at) VALUES ($1, $2, $3, $4, 'processing', now() + interval '24 hours') ON CONFLICT (key) DO UPDATE SET status = 'processing', expires_at = now() + interval '24 hours' RETURNING key;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "value": "={{ $json.source }}"
+            },
+            {
+              "value": "={{ $json.message_id }}"
+            },
+            {
+              "value": "={{ $json.idempotency_hash }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "main-idempotency-reserve",
+      "name": "Reserve Idempotency Key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1820, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/customer-lookup.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-customer-lookup",
+      "name": "Get or Create Customer",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [2080, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/conversation-memory.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-conversation-memory",
+      "name": "Load Conversation Memory",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [2340, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/ai-classification.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-classify",
+      "name": "Classify Intent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [2600, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/sentiment-analysis.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-sentiment",
+      "name": "Analyze Sentiment",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [2860, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ============================================================\n// 4. DETERMINISTIC POLICY ENGINE\n// Critical decisions are rule-based and never rely on the LLM\n// alone: low confidence, critical issues, human requests,\n// manual refund approval, angry/repeated complaints.\n// ============================================================\nconst env = $input.first().json;\nconst classification = env.classification || { intent: 'unknown', confidence: 0 };\nconst sentiment = env.sentiment || { sentiment: 'neutral', priority: 'normal', urgency: 0 };\nconst confidence = Number(classification.confidence);\nconst confidenceThreshold = Number(process.env.AI_CONFIDENCE_THRESHOLD || 0.6);\nconst refundThreshold = Number(process.env.REFUND_APPROVAL_THRESHOLD || 100);\n\nconst rules = [];\nlet action = 'respond';\nlet priority = sentiment.priority || 'normal';\nlet requires_human = false;\nlet refund_above_threshold = false;\n\n// --- refund threshold (manual approval) -------------------------\nlet refundAmount = null;\nconst amountMatch = String(env.message || '').match(/\\$\\s?(\\d+(\\.\\d{1,2})?)/);\nif (amountMatch) refundAmount = parseFloat(amountMatch[1]);\nif (env.metadata && Number.isFinite(Number(env.metadata.refund_amount))) refundAmount = Number(env.metadata.refund_amount);\n\nif (classification.intent === 'refund_request') {\n  rules.push('refund_review');\n  if (refundAmount !== null && refundAmount >= refundThreshold) {\n    refund_above_threshold = true;\n    rules.push('refund_above_threshold');\n    action = 'escalate';\n    if (priority === 'low' || priority === 'normal') priority = 'high';\n  }\n}\n\n// --- low confidence -> escalation -------------------------------\nif (Number.isFinite(confidence) && confidence < confidenceThreshold) {\n  rules.push('low_confidence');\n  if (action !== 'escalate') action = 'escalate';\n  if (priority === 'normal' || priority === 'low') priority = 'high';\n}\n\n// --- explicit human request -------------------------------------\nif (classification.intent === 'human_agent_request') {\n  rules.push('human_request');\n  action = 'escalate';\n  requires_human = true;\n}\n\n// --- angry / frustrated -> bump priority ------------------------\nif (sentiment.sentiment === 'angry' || sentiment.sentiment === 'frustrated') {\n  rules.push('negative_sentiment');\n  if (priority === 'low' || priority === 'normal') priority = 'high';\n}\n\n// --- urgent / critical -> immediate escalation ------------------\nif (sentiment.sentiment === 'urgent' || priority === 'critical') {\n  rules.push('urgent_issue');\n  priority = 'critical';\n  action = 'escalate';\n  requires_human = true;\n}\n\n// --- sensitive intents -> bump priority -------------------------\nif (['account_issue', 'payment_issue'].includes(classification.intent)) {\n  rules.push('sensitive_intent');\n  if (priority === 'low') priority = 'normal';\n}\n\n// --- human request keywords in message --------------------------\nconst lowerMsg = String(env.message || '').toLowerCase();\nif (/talk to (a |the )?human|speak to (a |the )?agent|human agent|real person|customer service agent|representative/.test(lowerMsg)) {\n  rules.push('human_request_keyword');\n  action = 'escalate';\n  requires_human = true;\n}\n\n// --- unknown intent -> clarify (RAG may still rescue it) --------\nif (classification.intent === 'unknown') {\n  rules.push('unknown_intent');\n  if (action !== 'escalate') action = 'clarify';\n}\n\nconst policy = {\n  action,\n  priority,\n  requires_human,\n  rules,\n  confidence,\n  confidence_threshold: confidenceThreshold,\n  refund_above_threshold,\n  refund_amount: refundAmount\n};\n\nreturn [{ json: { ...env, policy } }];"
+      },
+      "id": "main-policy-engine",
+      "name": "Deterministic Policy Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-immediate-escalation",
+              "leftValue": "={{ $json.policy.action }}",
+              "rightValue": "escalate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "main-immediate-escalation-if",
+      "name": "Immediate Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3380, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/escalation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-escalate-immediate",
+      "name": "Escalate (Immediate)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [3640, -220]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/rag-query.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-rag-query",
+      "name": "RAG Knowledge Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [3640, 220]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ============================================================\n// 5. RAG POLICY - combine retrieval strength with the action\n// decided by the deterministic policy engine.\n// strong RAG -> automated response\n// weak RAG   -> clarification\n// RAG miss   -> clarification (response generator will decide\n//               to ask a question or the response validation\n//               layer will catch unsupported answers)\n// ============================================================\nconst env = $input.first().json;\nconst rag = env.rag || { strong: false, weak: false, miss: false };\nconst policy = env.policy || { action: 'respond', rules: [] };\nconst rules = Array.isArray(policy.rules) ? policy.rules.slice() : [];\nlet action = policy.action || 'respond';\n\nif (rag.strong) {\n  rules.push('strong_rag_result');\n  if (action === 'clarify') action = 'respond';\n} else if (rag.weak) {\n  rules.push('weak_rag_result');\n  if (action === 'respond') action = 'clarify';\n} else if (rag.miss) {\n  rules.push('rag_miss');\n  if (action === 'respond') action = 'clarify';\n}\n\nreturn [{ json: { ...env, policy: { ...policy, action, rules } } }];"
+      },
+      "id": "main-rag-policy",
+      "name": "RAG Policy Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3900, 220]
+    },
+    {
+      "parameters": {
+        "dataPropertyName": "policy.action",
+        "rules": {
+          "values": [
+            {
+              "value": "escalate",
+              "outputIndex": 0
+            },
+            {
+              "value": "respond",
+              "outputIndex": 1
+            },
+            {
+              "value": "clarify",
+              "outputIndex": 2
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "main-route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [4160, 220]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/escalation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-escalate-rag",
+      "name": "Escalate (RAG Policy)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [4420, 0]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/response-generation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-generate",
+      "name": "Generate AI Response",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [4420, 220]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/response-validation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-validate-response",
+      "name": "Validate AI Response",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [4680, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-response-valid",
+              "leftValue": "={{ $json.validation.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "main-response-valid-if",
+      "name": "Response Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [4940, 220]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Prepare a single regeneration attempt with the validation\n// issues passed back into the prompt.\nconst env = $input.first().json;\nconst issues = env.validation && Array.isArray(env.validation.issues) ? env.validation.issues : [];\nreturn [{ json: { ...env, generation_mode: 'regen', validation_issues: issues } }];"
+      },
+      "id": "main-mark-regen",
+      "name": "Mark Regeneration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5200, 420]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/response-generation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-regenerate",
+      "name": "Regenerate AI Response",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [5460, 420]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/response-validation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-validate-regenerated",
+      "name": "Validate Regenerated Response",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [5720, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-regen-valid",
+              "leftValue": "={{ $json.validation.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "main-regen-valid-if",
+      "name": "Regeneration Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [5980, 420]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/escalation.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-escalate-regen-failed",
+      "name": "Escalate (Regeneration Failed)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [6240, 640]
+    },
+    {
+      "parameters": {
+        "source": "localFile",
+        "workflowPath": "={{ $env.SUBWORKFLOW_BASE_PATH }}/finalize-and-respond.json",
+        "mode": "runOnceForAllItems",
+        "options": {}
+      },
+      "id": "main-finalize",
+      "name": "Finalize & Respond",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 2,
+      "position": [6500, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "main-respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [6760, 220]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "true": [
+        [
+          {
+            "node": "Build Idempotency Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Respond Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Idempotency Key": {
+      "main": [
+        [
+          {
+            "node": "Check Idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Normalize Idempotency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Idempotency Check": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Request?": {
+      "true": [
+        [
+          {
+            "node": "Respond Cached Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Reserve Idempotency Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Idempotency Key": {
+      "main": [
+        [
+          {
+            "node": "Get or Create Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get or Create Customer": {
+      "main": [
+        [
+          {
+            "node": "Load Conversation Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Conversation Memory": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent": {
+      "main": [
+        [
+          {
+            "node": "Analyze Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Deterministic Policy Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deterministic Policy Engine": {
+      "main": [
+        [
+          {
+            "node": "Immediate Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Immediate Escalation?": {
+      "true": [
+        [
+          {
+            "node": "Escalate (Immediate)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "RAG Knowledge Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate (Immediate)": {
+      "main": [
+        [
+          {
+            "node": "Finalize & Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG Knowledge Retrieval": {
+      "main": [
+        [
+          {
+            "node": "RAG Policy Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG Policy Engine": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "0": [
+        [
+          {
+            "node": "Escalate (RAG Policy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "1": [
+        [
+          {
+            "node": "Generate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "2": [
+        [
+          {
+            "node": "Generate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate (RAG Policy)": {
+      "main": [
+        [
+          {
+            "node": "Finalize & Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Response Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Valid?": {
+      "true": [
+        [
+          {
+            "node": "Finalize & Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Mark Regeneration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Regeneration": {
+      "main": [
+        [
+          {
+            "node": "Regenerate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regenerate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Validate Regenerated Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Regenerated Response": {
+      "main": [
+        [
+          {
+            "node": "Regeneration Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regeneration Valid?": {
+      "true": [
+        [
+          {
+            "node": "Finalize & Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Escalate (Regeneration Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate (Regeneration Failed)": {
+      "main": [
+        [
+          {
+            "node": "Finalize & Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize & Respond": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "workflow-customer-support-v1"
+}

@@ -1,0 +1,10 @@
+{
+  "channel": "website",
+  "customer_id": "cus_scn_01",
+  "conversation_id": "conv_scn_01",
+  "message_id": "msg_scn_01",
+  "message": "Hi, what is your shipping policy and how long does standard delivery take?",
+  "timestamp": "2026-01-15T09:30:00Z",
+  "customer": { "name": "Alex Morgan", "email": "alex.morgan@example.com" },
+  "metadata": {}
+}

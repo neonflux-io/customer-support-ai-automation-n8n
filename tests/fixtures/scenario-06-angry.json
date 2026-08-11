@@ -1,0 +1,10 @@
+{
+  "channel": "email",
+  "customer_id": "cus_scn_06",
+  "conversation_id": "conv_scn_06",
+  "message_id": "msg_scn_06",
+  "message": "This is ridiculous, your service is terrible, I'm furious and I want a manager NOW!",
+  "timestamp": "2026-01-15T09:55:00Z",
+  "customer": { "name": "Gary O'Brien" },
+  "metadata": {}
+}

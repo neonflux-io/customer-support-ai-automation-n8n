@@ -1,0 +1,5 @@
+{
+  "action": "assign",
+  "ticket_number": "T-10001",
+  "assignee": "agent.maria@example.com"
+}

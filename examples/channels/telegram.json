@@ -1,0 +1,15 @@
+{
+  "channel": "telegram",
+  "customer_id": "tg_123456789",
+  "conversation_id": "tg_conv_7002",
+  "message_id": "tg_msg_5002",
+  "message": "Can I get a refund for the premium plan? I changed my mind.",
+  "timestamp": "2026-01-15T10:00:00Z",
+  "customer": {
+    "name": "Dmitry Petrov"
+  },
+  "metadata": {
+    "plan": "premium",
+    "refund_amount": 49
+  }
+}

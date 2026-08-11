@@ -1,0 +1,15 @@
+{
+  "channel": "slack",
+  "customer_id": "U08ABCDEF12",
+  "conversation_id": "sl_conv_7004",
+  "message_id": "sl_msg_5004",
+  "message": "What are the prices of your enterprise plans?",
+  "timestamp": "2026-01-15T10:30:00Z",
+  "customer": {
+    "name": "James Wilson"
+  },
+  "metadata": {
+    "workspace": "acme-corp",
+    "channel_name": "support"
+  }
+}

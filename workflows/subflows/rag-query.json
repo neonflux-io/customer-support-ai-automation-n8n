@@ -1,0 +1,132 @@
+{
+  "name": "AI Support - RAG Knowledge Retrieval",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-rag-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.EMBEDDING_MODEL || 'text-embedding-3-small' }}",
+        "options": {}
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "id": "sw-rag-embeddings",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "load",
+        "tableName": "document_chunks",
+        "prompt": "={{ $json.message }}",
+        "topK": "={{ Number($env.RAG_TOP_K || 4) }}",
+        "includeDocumentMetadata": true,
+        "options": {
+          "distanceStrategy": "cosine",
+          "columnNames": {
+            "values": {
+              "idColumnName": "id",
+              "vectorColumnName": "embedding",
+              "contentColumnName": "chunk_text",
+              "metadataColumnName": "metadata"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-rag-vectorstore",
+      "name": "Postgres Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Evaluate retrieved chunks against the configurable similarity thresholds and\n// build the grounded context that is later injected into the LLM prompt.\nconst envelope = $('When Called by Another Workflow').first().json;\nconst hits = $('Postgres Vector Store').all().map(i => i.json);\n\nconst strongThreshold = Number(process.env.RAG_STRONG_THRESHOLD || 0.5);\nconst similarityThreshold = Number(process.env.RAG_SIMILARITY_THRESHOLD || 0.3);\nconst topK = Number(process.env.RAG_TOP_K || 4);\n\nfunction toNumber(v) {\n  const n = typeof v === 'number' ? v : Number(v);\n  return Number.isFinite(n) ? n : 0;\n}\n\nfunction parseMetadata(m) {\n  if (m && typeof m === 'object') return m;\n  if (typeof m === 'string') {\n    try { return JSON.parse(m); } catch (e) { return {}; }\n  }\n  return {};\n}\n\n// The vector store load operation returns { document: { pageContent, metadata }, score }.\n// score is the cosine distance (0 = identical, higher = worse), so convert it to a\n// similarity in [0,1] where higher is better.\nconst normalized = hits\n  .map(h => {\n    const doc = h.document || {};\n    const distance = toNumber(h.score);\n    const similarity = Math.max(0, Math.min(1, 1 - distance));\n    return {\n      chunk_text: String(doc.pageContent || ''),\n      metadata: parseMetadata(doc.metadata),\n      score: similarity,\n      distance\n    };\n  })\n  .filter(h => h.chunk_text.trim())\n  .sort((a, b) => b.score - a.score);\n\nconst bestScore = normalized.length ? normalized[0].score : 0;\nconst strong = normalized.length > 0 && bestScore >= strongThreshold;\nconst weak = !strong && normalized.length > 0 && bestScore >= similarityThreshold;\nconst miss = normalized.length === 0 || bestScore < similarityThreshold;\n\nconst top_context = normalized.slice(0, topK)\n  .map(h => `[Title: ${h.metadata.title || h.metadata.document_id || 'unknown'}] [Category: ${h.metadata.category || 'general'}]\n${h.chunk_text}`)\n  .join('\\n\\n---\\n\\n');\n\nconst rag = {\n  query: envelope.message,\n  hits: normalized,\n  best_score: bestScore,\n  strong,\n  weak,\n  miss,\n  top_context\n};\n\nreturn [{ json: { ...envelope, rag } }];"
+      },
+      "id": "sw-rag-build-context",
+      "name": "Build RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Postgres Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Vector Store": {
+      "main": [
+        [
+          {
+            "node": "Build RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-rag-query-v1"
+}

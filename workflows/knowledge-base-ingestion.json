@@ -1,0 +1,501 @@
+{
+  "name": "AI Support - Knowledge Base Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kb/ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "kb-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "kb-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Extract and normalize documents from the webhook body. If no documents are\n// provided, fall back to fetching from KB_SOURCE_URL (or the payload source_url).\nconst input = $input.first().json;\nconst payload = (input && input.body && typeof input.body === 'object' && !Array.isArray(input.body))\n  ? input.body\n  : input;\n\nconst rawDocs = Array.isArray(payload && payload.documents) ? payload.documents : [];\nconst docs = rawDocs\n  .filter(d => d && typeof (d.content || d.text) === 'string' && String(d.content || d.text).trim())\n  .map((d, i) => ({\n    title: String(d.title || payload.title || ('Document ' + (i + 1))).trim().slice(0, 512),\n    source: String(d.source || payload.source || 'webhook').slice(0, 255),\n    category: String(d.category || payload.category || 'general').slice(0, 100),\n    content: String(d.content || d.text).trim(),\n    metadata: (d.metadata && typeof d.metadata === 'object' && !Array.isArray(d.metadata)) ? d.metadata : {}\n  }));\n\nconst use_fetch = docs.length === 0;\nconst fetch_url = String((payload && payload.source_url) || process.env.KB_SOURCE_URL || '');\nreturn [{ json: { docs, use_fetch, fetch_url } }];"
+      },
+      "id": "kb-extract",
+      "name": "Extract & Normalize Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-kb-use-fetch",
+              "leftValue": "={{ $json.use_fetch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "kb-has-docs",
+      "name": "Has Documents?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.fetch_url }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "kb-fetch",
+      "name": "Fetch Knowledge Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Parse an arbitrary remote response (array, {documents: [...]}, {data: [...]})\n// into the normalized document shape.\nconst res = $input.first().json;\nlet data = res && res.body && typeof res.body === 'object' ? res.body : res;\nif (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = null; } }\n\nlet arr = Array.isArray(data) ? data\n  : (Array.isArray(data && data.documents) ? data.documents\n  : (Array.isArray(data && data.data) ? data.data : []));\n\nconst docs = arr\n  .filter(d => d && typeof (d.content || d.text) === 'string' && String(d.content || d.text).trim())\n  .map((d, i) => ({\n    title: String(d.title || d.name || ('Fetched ' + (i + 1))).trim().slice(0, 512),\n    source: String(d.source || 'remote').slice(0, 255),\n    category: String(d.category || 'general').slice(0, 100),\n    content: String(d.content || d.text).trim(),\n    metadata: (d.metadata && typeof d.metadata === 'object' && !Array.isArray(d.metadata)) ? d.metadata : {}\n  }));\n\nreturn [{ json: { docs } }];"
+      },
+      "id": "kb-parse-fetched",
+      "name": "Parse Fetched Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Expand the docs array into one item per document so downstream nodes\n// process each document independently.\nconst docs = $input.first().json.docs || [];\nreturn docs.map(d => ({ json: d }));"
+      },
+      "id": "kb-expand",
+      "name": "Expand Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (title, source, category, content, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (title, source) DO UPDATE SET content = EXCLUDED.content, category = EXCLUDED.category, metadata = EXCLUDED.metadata, updated_at = now() RETURNING id, title, source, category, content;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.title }}"
+            },
+            {
+              "value": "={{ $json.source }}"
+            },
+            {
+              "value": "={{ $json.category }}"
+            },
+            {
+              "value": "={{ $json.content }}"
+            },
+            {
+              "value": "={{ JSON.stringify($json.metadata) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "kb-insert-docs",
+      "name": "Insert Documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Deterministic recursive character chunking with paragraph/word boundary\n// awareness. Produces one item per chunk for the vector store upsert.\nfunction uuid() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : ((r & 0x3) | 0x8);\n    return v.toString(16);\n  });\n}\n\nconst chunkSize = Number(process.env.KB_CHUNK_SIZE || 800);\nconst chunkOverlap = Number(process.env.KB_CHUNK_OVERLAP || 100);\nconst out = [];\n\nfor (const doc of $input.all().map(i => i.json)) {\n  const text = String(doc.content || '');\n  let start = 0;\n  let index = 0;\n  while (start < text.length) {\n    let end = Math.min(start + chunkSize, text.length);\n    if (end < text.length) {\n      let cut = text.lastIndexOf('\\n\\n', end);\n      if (cut < start + 40) cut = text.lastIndexOf('\\n', end);\n      if (cut < start + 40) cut = text.lastIndexOf(' ', end);\n      if (cut >= start + 40 && cut <= end) end = cut;\n    }\n    const chunkText = text.slice(start, end).trim();\n    if (chunkText) {\n      out.push({ json: {\n        id: uuid(),\n        chunk_text: chunkText,\n        metadata: {\n          document_id: doc.id,\n          title: doc.title,\n          source: doc.source,\n          category: doc.category,\n          chunk_index: index\n        }\n      } });\n    }\n    if (end >= text.length) break;\n    start = Math.max(0, end - chunkOverlap);\n    index += 1;\n  }\n}\n\nreturn out;"
+      },
+      "id": "kb-chunk",
+      "name": "Chunk & Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.EMBEDDING_MODEL || 'text-embedding-3-small' }}",
+        "options": {}
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "id": "kb-embeddings",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2080,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "document_chunks",
+        "options": {
+          "distanceStrategy": "cosine",
+          "columnNames": {
+            "values": {
+              "idColumnName": "id",
+              "vectorColumnName": "embedding",
+              "contentColumnName": "chunk_text",
+              "metadataColumnName": "metadata"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "kb-upsert-chunks",
+      "name": "Upsert Chunks",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.4,
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE document_chunks SET document_id = (metadata->>'document_id')::uuid, chunk_index = COALESCE((metadata->>'chunk_index')::int, 0) WHERE document_id IS NULL AND metadata ? 'document_id';",
+        "queryParameters": {
+          "parameters": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "kb-link-chunks",
+      "name": "Link Chunks to Documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2340,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const docs = $('Insert Documents').all().length;\nconst chunks = $('Chunk & Prepare').all().length;\nreturn [{ json: { success: true, documents_ingested: docs, chunks_created: chunks, chunks_embedded: chunks } }];"
+      },
+      "id": "kb-build-response",
+      "name": "Build Ingestion Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "kb-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "allInputData",
+        "textSplittingMode": "simple",
+        "options": {
+          "pointers": "/chunk_text",
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "document_id",
+                "value": "={{ $json.metadata.document_id }}"
+              },
+              {
+                "name": "chunk_index",
+                "value": "={{ $json.metadata.chunk_index }}"
+              },
+              {
+                "name": "title",
+                "value": "={{ $json.metadata.title }}"
+              },
+              {
+                "name": "category",
+                "value": "={{ $json.metadata.category }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-default-data-loader",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract & Normalize Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract & Normalize Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Normalize Documents": {
+      "main": [
+        [
+          {
+            "node": "Has Documents?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Documents?": {
+      "true": [
+        [
+          {
+            "node": "Fetch Knowledge Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Expand Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Knowledge Source": {
+      "main": [
+        [
+          {
+            "node": "Parse Fetched Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Fetched Documents": {
+      "main": [
+        [
+          {
+            "node": "Expand Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Documents": {
+      "main": [
+        [
+          {
+            "node": "Insert Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Documents": {
+      "main": [
+        [
+          {
+            "node": "Chunk & Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk & Prepare": {
+      "main": [
+        [
+          {
+            "node": "Upsert Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Upsert Chunks",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Upsert Chunks",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Chunks": {
+      "main": [
+        [
+          {
+            "node": "Link Chunks to Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Link Chunks to Documents": {
+      "main": [
+        [
+          {
+            "node": "Build Ingestion Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Ingestion Response": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "workflow-knowledge-base-ingestion-v1"
+}

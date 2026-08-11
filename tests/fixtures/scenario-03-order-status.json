@@ -1,0 +1,10 @@
+{
+  "channel": "whatsapp",
+  "customer_id": "cus_scn_03",
+  "conversation_id": "conv_scn_03",
+  "message_id": "msg_scn_03",
+  "message": "Where is my order ORD-2002? It's been 10 days.",
+  "timestamp": "2026-01-15T09:40:00Z",
+  "customer": { "name": "Maria Silva" },
+  "metadata": { "order_id": "ORD-2002" }
+}

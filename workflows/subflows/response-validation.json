@@ -1,0 +1,50 @@
+{
+  "name": "AI Support - Response Validation",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-validation-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Deterministic response validation: relevance, factual grounding, unsupported\n// claims, prompt leakage, secrets, length and business-rule compliance.\nconst envelope = $input.first().json;\nconst responseText = envelope.response && envelope.response.text ? String(envelope.response.text).trim() : '';\nconst rag = envelope.rag || {};\nconst classification = envelope.classification || {};\nconst policy = envelope.policy || {};\n\nconst minLength = Number(process.env.RESPONSE_MIN_LENGTH || 5);\nconst maxLength = Number(process.env.RESPONSE_MAX_LENGTH || 500);\nconst issues = [];\n\n// 1. Empty / length\nif (!responseText) {\n  issues.push('empty_response');\n} else if (responseText.length < minLength) {\n  issues.push('response_too_short');\n} else if (responseText.length > maxLength) {\n  issues.push('response_too_long');\n}\n\n// 2. Prompt leakage markers\nconst leakMarkers = [\n  'system prompt', 'your instructions', 'your internal', 'as an ai', 'as a language model',\n  'openai', 'model name', 'api key', 'sk-', 'credentials', 'secret key', 'system message',\n  'developer message', 'ignore previous instructions'\n];\nfor (const m of leakMarkers) {\n  if (responseText.toLowerCase().includes(m)) {\n    issues.push('prompt_leak:' + m);\n    break;\n  }\n}\n\n// 3. Secrets patterns\nif (/(sk-[A-Za-z0-9]{16,})|(AKIA[0-9A-Z]{16})|(xox[baprs]-[A-Za-z0-9-]{10,})/.test(responseText)) {\n  issues.push('secret_detected');\n}\n\n// 4. Unsupported factual claims when RAG grounding is weak\nconst claims = [];\nif (/\\$\\s?\\d+/.test(responseText)) claims.push('price');\nif (/\\b\\d+\\s*(business\\s*)?days?\\b/.test(responseText)) claims.push('delivery_window');\nif (/refund/i.test(responseText)) claims.push('refund');\nif (/\\border\\b/i.test(responseText)) claims.push('order');\nif (/\\b(password|account balance|reset|card|billing)\\b/i.test(responseText)) claims.push('account');\n\nconst contextLower = (rag.top_context || '').toLowerCase();\nif (!rag.strong) {\n  for (const c of claims) {\n    if (c === 'refund' && !contextLower.includes('refund')) issues.push('ungrounded_claim:' + c);\n    if ((c === 'price' || c === 'delivery_window') && !contextLower.includes('ship') && !contextLower.includes('$')) issues.push('ungrounded_claim:' + c);\n    if (c === 'order' && !contextLower.includes('order')) issues.push('ungrounded_claim:' + c);\n    if (c === 'account' && !contextLower.includes('account')) issues.push('ungrounded_claim:' + c);\n  }\n}\n\n// 5. Business rule: refund above threshold must mention review/approval\nif (classification.intent === 'refund_request') {\n  const amounts = responseText.match(/\\$\\s?\\d+(\\.\\d+)?/g);\n  const threshold = Number(process.env.REFUND_APPROVAL_THRESHOLD || 100);\n  if (amounts && amounts.some(a => parseFloat(a.replace(/[$ ,]/g, '')) >= threshold)) {\n    if (!/review|approval|agent|human|team|processing/.test(responseText.toLowerCase())) {\n      issues.push('refund_above_threshold_without_approval');\n    }\n  }\n}\n\n// 6. Relevance: meaningful token overlap between customer message and response\nconst stopwords = new Set(['the','a','an','is','are','was','were','to','of','in','for','on','at','my','i','you','your','it','this','that','do','did','does','and','or','but','with','about','have','has','can','could','please','thanks','thank','me','we','us','get']);\nconst tokenize = (t) => (t || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length > 2 && !stopwords.has(x));\nconst msgTokens = new Set(tokenize(envelope.message));\nconst respTokens = new Set(tokenize(responseText));\nlet overlap = 0;\nfor (const t of msgTokens) if (respTokens.has(t)) overlap++;\n\nconst isClarifying = /(do you mean|clarify|could you provide|which (order|product)|more details|i (don't|cannot|can't).*(find|answer|confirm)|not available|cannot confirm)/i.test(responseText);\nif (overlap === 0 && !isClarifying) issues.push('irrelevant_response');\n\n// 7. False certainty on missing knowledge\nif (rag.miss && /\\b(sure|definitely|guaranteed|will be delivered|approved|confirmed)\\b/i.test(responseText)) {\n  issues.push('false_certainty_on_missing_knowledge');\n}\n\n// 8. Critical intent must never be answered as fully automated success\nif (['account_issue', 'payment_issue', 'order_issue'].includes(classification.intent) && policy.priority === 'critical' && envelope.response && !envelope.response.regenerated) {\n  issues.push('critical_issue_needs_review');\n}\n\nconst valid = issues.length === 0;\nconst score = valid ? 1 : Math.max(0.1, 1 - issues.length * 0.25);\nconst validation = { valid, issues, score };\nreturn [{ json: { ...envelope, validation } }];"
+      },
+      "id": "sw-validation-code",
+      "name": "Validate AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-response-validation-v1"
+}

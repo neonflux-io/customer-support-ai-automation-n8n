@@ -1,0 +1,531 @@
+{
+  "name": "AI Support - Ticket Management API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tickets",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ticket-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Parse and validate the ticket management request.\n// Actions: create, update, assign, resolve, reopen, get, list.\nconst input = $input.first().json;\nconst body = (input && input.body && typeof input.body === 'object' && !Array.isArray(input.body))\n  ? input.body\n  : input;\n\nconst action = String((body && body.action) || '').trim().toLowerCase();\nconst allowed = ['create', 'update', 'assign', 'resolve', 'reopen', 'get', 'list'];\nconst valid_action = allowed.includes(action);\n\nconst p = { ...(body || {}), action };\np.ticket_id = String(body.ticket_id || '').trim();\np.ticket_number = String(body.ticket_number || '').trim();\n\nif (valid_action) {\n  if (['update', 'assign', 'resolve', 'reopen', 'get'].includes(action) && !p.ticket_id) {\n    p.validation_error = 'ticket_id_required';\n  }\n  if (action === 'create' && !p.subject) {\n    p.validation_error = 'subject_required';\n  }\n}\n\nreturn [{ json: p }];"
+      },
+      "id": "ticket-parse",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-ticket-valid-action",
+              "leftValue": "={{ $json.valid_action }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ticket-valid-if",
+      "name": "Valid Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "dataPropertyName": "action",
+        "rules": {
+          "values": [
+            {
+              "value": "create",
+              "outputIndex": 0
+            },
+            {
+              "value": "update",
+              "outputIndex": 1
+            },
+            {
+              "value": "assign",
+              "outputIndex": 2
+            },
+            {
+              "value": "resolve",
+              "outputIndex": 3
+            },
+            {
+              "value": "reopen",
+              "outputIndex": 4
+            },
+            {
+              "value": "get",
+              "outputIndex": 5
+            },
+            {
+              "value": "list",
+              "outputIndex": 6
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ticket-action-switch",
+      "name": "Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [780, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH created AS (INSERT INTO tickets (customer_id, conversation_id, subject, status, priority, intent, confidence, sentiment, ai_summary, escalation_reason, assigned_to, last_message, metadata) VALUES (NULLIF($1, '')::uuid, NULLIF($2, '')::uuid, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, '')::numeric, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), COALESCE(NULLIF($13, '')::jsonb, '{}'::jsonb)) RETURNING ticket_number, id, status, priority, subject, created_at) SELECT * FROM created;",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.customer_id }}" },
+            { "value": "={{ $json.conversation_id }}" },
+            { "value": "={{ $json.subject }}" },
+            { "value": "={{ $json.status || 'open' }}" },
+            { "value": "={{ $json.priority }}" },
+            { "value": "={{ $json.intent }}" },
+            { "value": "={{ $json.confidence }}" },
+            { "value": "={{ $json.sentiment }}" },
+            { "value": "={{ $json.ai_summary }}" },
+            { "value": "={{ $json.escalation_reason }}" },
+            { "value": "={{ $json.assigned_to }}" },
+            { "value": "={{ $json.last_message }}" },
+            { "value": "={{ JSON.stringify($json.metadata || {}) }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-create",
+      "name": "Create Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, -360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (UPDATE tickets SET subject = COALESCE(NULLIF($2, ''), subject), priority = COALESCE(NULLIF($3, ''), priority), status = COALESCE(NULLIF($4, ''), status), ai_summary = COALESCE(NULLIF($5, ''), ai_summary), resolution = COALESCE(NULLIF($6, ''), resolution), last_message = COALESCE(NULLIF($7, ''), last_message), updated_at = now() WHERE id = NULLIF($1, '')::uuid RETURNING ticket_number, id, status, priority, updated_at) SELECT * FROM updated UNION ALL SELECT 'NONE', NULL, NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM updated);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.ticket_id }}" },
+            { "value": "={{ $json.subject }}" },
+            { "value": "={{ $json.priority }}" },
+            { "value": "={{ $json.status }}" },
+            { "value": "={{ $json.ai_summary }}" },
+            { "value": "={{ $json.resolution }}" },
+            { "value": "={{ $json.last_message }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-update",
+      "name": "Update Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, -180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (UPDATE tickets SET assigned_to = NULLIF($2, ''), status = CASE WHEN status = 'open' THEN 'assigned' ELSE status END, updated_at = now() WHERE id = NULLIF($1, '')::uuid RETURNING ticket_number, id, assigned_to, status) SELECT * FROM updated UNION ALL SELECT 'NONE', NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM updated);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.ticket_id }}" },
+            { "value": "={{ $json.assigned_to }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-assign",
+      "name": "Assign Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (UPDATE tickets SET status = 'resolved', resolution = COALESCE(NULLIF($2, ''), resolution), resolved_at = now(), updated_at = now() WHERE id = NULLIF($1, '')::uuid RETURNING ticket_number, id, status, resolved_at) SELECT * FROM updated UNION ALL SELECT 'NONE', NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM updated);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.ticket_id }}" },
+            { "value": "={{ $json.resolution }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-resolve",
+      "name": "Resolve Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (UPDATE tickets SET status = 'open', closed_at = NULL, resolved_at = NULL, updated_at = now() WHERE id = NULLIF($1, '')::uuid RETURNING ticket_number, id, status) SELECT * FROM updated UNION ALL SELECT 'NONE', NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM updated);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.ticket_id }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-reopen",
+      "name": "Reopen Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH found AS (SELECT ticket_number, id, customer_id, conversation_id, subject, status, priority, intent, confidence, sentiment, ai_summary, escalation_reason, assigned_to, resolution, last_message, created_at, updated_at FROM tickets WHERE id = NULLIF($1, '')::uuid OR ticket_number = NULLIF($2, '')) SELECT * FROM found UNION ALL SELECT 'NONE', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL::numeric, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM found);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.ticket_id }}" },
+            { "value": "={{ $json.ticket_number }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-get",
+      "name": "Get Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 540]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH found AS (SELECT ticket_number, id, status, priority, intent, assigned_to, created_at FROM tickets WHERE NULLIF($1, '') IS NULL OR status = $1 ORDER BY created_at DESC LIMIT 100) SELECT * FROM found UNION ALL SELECT 'NONE', NULL, NULL, NULL, NULL, NULL, NULL WHERE NOT EXISTS (SELECT 1 FROM found);",
+        "queryParameters": {
+          "parameters": [
+            { "value": "={{ $json.status }}" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "ticket-list",
+      "name": "List Tickets",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1040, 720]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Format the query result; the 'NONE' marker row signals a missing ticket.\nconst rows = $input.all().map(i => i.json);\nif (rows.length === 1 && rows[0].ticket_number === 'NONE') {\n  return [{ json: { success: false, error: 'ticket_not_found' } }];\n}\nreturn [{ json: { success: true, data: rows } }];"
+      },
+      "id": "ticket-format",
+      "name": "Format Ticket Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ticket-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: $json.validation_error || 'invalid_action' } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "ticket-respond-invalid",
+      "name": "Respond Invalid Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [780, 320]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "node": "Valid Action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Action?": {
+      "true": [
+        [
+          {
+            "node": "Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Respond Invalid Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action": {
+      "0": [
+        [
+          {
+            "node": "Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "1": [
+        [
+          {
+            "node": "Update Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "2": [
+        [
+          {
+            "node": "Assign Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "3": [
+        [
+          {
+            "node": "Resolve Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "4": [
+        [
+          {
+            "node": "Reopen Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "5": [
+        [
+          {
+            "node": "Get Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "6": [
+        [
+          {
+            "node": "List Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reopen Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Ticket": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Tickets": {
+      "main": [
+        [
+          {
+            "node": "Format Ticket Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Ticket Result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "workflow-ticket-management-v1"
+}

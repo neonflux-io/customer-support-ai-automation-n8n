@@ -1,0 +1,338 @@
+{
+  "name": "AI Support - Conversation Memory",
+  "nodes": [
+    {
+      "parameters": {
+        "inputDataMode": "acceptAll"
+      },
+      "id": "sw-memory-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversations (external_conversation_id, customer_id, channel, first_message_at, last_message_at, status) VALUES ($1, $2::uuid, $3, COALESCE($4::timestamptz, now()), now(), 'open') ON CONFLICT (external_conversation_id, channel) DO UPDATE SET customer_id = EXCLUDED.customer_id, last_message_at = now(), updated_at = now() RETURNING id, external_conversation_id, customer_id, channel, status, summary, message_count, first_message_at, last_message_at;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.conversation_id }}"
+            },
+            {
+              "value": "={{ $json.customer.id }}"
+            },
+            {
+              "value": "={{ $json.source }}"
+            },
+            {
+              "value": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-memory-upsert-conversation",
+      "name": "Upsert Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, external_message_id, role, content, intent, confidence, sentiment, priority, requires_human, created_at FROM (SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2) recent ORDER BY created_at ASC;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.id }}"
+            },
+            {
+              "value": "={{ Number($env.CONTEXT_MESSAGE_LIMIT || 10) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-memory-load-messages",
+      "name": "Load Recent Messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Build a bounded, summarizable memory window instead of shipping unbounded\n// history to the LLM.\nconst envelope = $('When Called by Another Workflow').first().json;\nconst conversation = $('Upsert Conversation').first().json;\nconst messages = $('Load Recent Messages').all().map(i => i.json);\n\nconst history = messages.map(m => `${m.role}: ${m.content}`).join('\\n');\nconst summarizeThreshold = Number(process.env.CONTEXT_SUMMARIZE_THRESHOLD || 8);\n\nconst memory = {\n  history_text: history,\n  history_count: messages.length,\n  recent_messages: messages,\n  summary: conversation.summary || '',\n  needs_summary: messages.length >= summarizeThreshold\n};\n\nreturn [{ json: { ...envelope, conversation, memory } }];"
+      },
+      "id": "sw-memory-build-context",
+      "name": "Build Memory Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "cond-memory-needs-summary",
+              "leftValue": "={{ $json.memory.needs_summary }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sw-memory-needs-summary",
+      "name": "Needs Summary?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.CHAT_MODEL || 'gpt-4o-mini' }}",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      },
+      "id": "sw-memory-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "prompt": "You are an expert at summarizing customer support conversations. Write in English. Be factual and concise.\n\nSummarize the following customer support conversation in 3-5 concise sentences. Preserve key facts: the customer, the issue, amounts, dates, products, and any commitments already made. Do not add information that is not present.\n\nCONVERSATION:\n{{ $json.memory.history_text }}"
+      },
+      "id": "sw-memory-summarize",
+      "name": "Summarize Conversation",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE conversations SET summary = $1, updated_at = now() WHERE id = $2 RETURNING id, summary;",
+        "queryParameters": {
+          "parameters": [
+            {
+              "value": "={{ $json.output }}"
+            },
+            {
+              "value": "={{ $('Upsert Conversation').first().json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_POSTGRES_CREDENTIAL_ID",
+          "name": "Postgres"
+        }
+      },
+      "id": "sw-memory-update-summary",
+      "name": "Update Conversation Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const envelope = $('When Called by Another Workflow').first().json;\nconst conversation = $('Upsert Conversation').first().json;\nconst summary = $('Update Conversation Summary').first().json.summary;\nconst memory = { ...$('Build Memory Context').first().json.memory, summary };\nreturn [{ json: { ...envelope, conversation: { ...conversation, summary }, memory } }];"
+      },
+      "id": "sw-memory-output-summarized",
+      "name": "Assemble Memory Output (Summarized)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const envelope = $('When Called by Another Workflow').first().json;\nconst conversation = $('Upsert Conversation').first().json;\nconst memory = $('Build Memory Context').first().json.memory;\nreturn [{ json: { ...envelope, conversation, memory } }];"
+      },
+      "id": "sw-memory-output-nochange",
+      "name": "Assemble Memory Output (No-Change)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Upsert Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Conversation": {
+      "main": [
+        [
+          {
+            "node": "Load Recent Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Recent Messages": {
+      "main": [
+        [
+          {
+            "node": "Build Memory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Memory Context": {
+      "main": [
+        [
+          {
+            "node": "Needs Summary?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Summary?": {
+      "true": [
+        [
+          {
+            "node": "Summarize Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "false": [
+        [
+          {
+            "node": "Assemble Memory Output (No-Change)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarize Conversation",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Conversation": {
+      "main": [
+        [
+          {
+            "node": "Update Conversation Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Conversation Summary": {
+      "main": [
+        [
+          {
+            "node": "Assemble Memory Output (Summarized)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [],
+  "pinData": {},
+  "versionId": "subflow-conversation-memory-v1"
+}

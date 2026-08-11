@@ -1,0 +1,10 @@
+{
+  "channel": "slack",
+  "customer_id": "cus_scn_08",
+  "conversation_id": "conv_scn_08",
+  "message_id": "msg_scn_08",
+  "message": "Can your platform help me bet on esports tournaments?",
+  "timestamp": "2026-01-15T10:05:00Z",
+  "customer": { "name": "James Wilson" },
+  "metadata": {}
+}
