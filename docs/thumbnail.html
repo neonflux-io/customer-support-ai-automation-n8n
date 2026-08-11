@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Customer Support AI Automation (n8n) — Thumbnail</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #020617;
+      font-family: 'JetBrains Mono', monospace;
+      color: #e2e8f0;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    /* =========================================================
+       HERO / SOCIAL PREVIEW — 1280x640 (GitHub social preview)
+       Screenshot crop area for upload:
+       .hero { width: 1280px; height: 640px; }
+       ========================================================= */
+    .hero {
+      position: relative;
+      width: 1280px;
+      height: 640px;
+      background:
+        radial-gradient(ellipse at 80% 20%, rgba(34, 211, 238, 0.18) 0%, transparent 55%),
+        radial-gradient(ellipse at 20% 90%, rgba(167, 139, 250, 0.16) 0%, transparent 55%),
+        linear-gradient(180deg, #020617 0%, #0b1220 100%);
+      border-radius: 16px;
+      border: 1px solid #1e293b;
+      overflow: hidden;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+
+    /* Grid backdrop */
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(30, 41, 59, 0.55) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.55) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+    }
+
+    /* Soft glow blobs */
+    .hero::after {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 90% 10%, rgba(34, 211, 238, 0.22) 0%, transparent 18%),
+        radial-gradient(circle at 10% 85%, rgba(167, 139, 250, 0.20) 0%, transparent 20%);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      position: relative;
+      width: 100%; height: 100%;
+      padding: 56px 64px;
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 32px;
+      z-index: 1;
+    }
+
+    /* LEFT — copy */
+    .left { display: flex; flex-direction: column; justify-content: space-between; }
+
+    .brand-row {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .brand-mark {
+      width: 44px; height: 44px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 8px 24px rgba(34, 211, 238, 0.25);
+    }
+    .brand-mark svg { width: 26px; height: 26px; }
+
+    .brand-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px; font-weight: 600;
+      color: #cbd5e1; letter-spacing: 0.02em;
+    }
+    .brand-name span { color: #22d3ee; }
+
+    h1.title {
+      font-size: 52px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.025em;
+      color: #f8fafc;
+      margin-top: 22px;
+    }
+    h1.title .grad {
+      background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 60%, #f472b6 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    p.tag {
+      font-size: 17px;
+      line-height: 1.55;
+      color: #94a3b8;
+      max-width: 540px;
+      margin-top: 18px;
+    }
+
+    .badges {
+      display: flex; flex-wrap: wrap; gap: 10px;
+      margin-top: 24px;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid #1e293b;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; font-weight: 500;
+      color: #cbd5e1;
+      backdrop-filter: blur(6px);
+    }
+    .badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .dot.c-cyan { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
+    .dot.c-emerald { background: #34d399; box-shadow: 0 0 8px #34d399; }
+    .dot.c-violet { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+    .dot.c-amber { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+    .dot.c-rose { background: #fb7185; box-shadow: 0 0 8px #fb7185; }
+
+    .meta-row {
+      display: flex; align-items: center; gap: 18px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px; color: #64748b;
+    }
+    .meta-row .sep { width: 4px; height: 4px; border-radius: 50%; background: #334155; }
+    .meta-row .ver { color: #34d399; font-weight: 600; }
+
+    /* RIGHT — pipeline diagram */
+    .right {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .pipeline {
+      position: relative;
+      width: 100%; max-width: 540px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .node {
+      position: relative;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 14px 14px;
+      backdrop-filter: blur(6px);
+      transition: transform 0.2s;
+    }
+    .node::before {
+      content: ''; position: absolute; left: 14px; top: 14px;
+      width: 7px; height: 7px; border-radius: 50%;
+    }
+    .node.cyan::before    { background: #22d3ee; box-shadow: 0 0 10px #22d3ee; }
+    .node.emerald::before { background: #34d399; box-shadow: 0 0 10px #34d399; }
+    .node.violet::before  { background: #a78bfa; box-shadow: 0 0 10px #a78bfa; }
+    .node.amber::before   { background: #fbbf24; box-shadow: 0 0 10px #fbbf24; }
+    .node.rose::before    { background: #fb7185; box-shadow: 0 0 10px #fb7185; }
+    .node.cyan    { border-color: rgba(34, 211, 238, 0.35); }
+    .node.emerald { border-color: rgba(52, 211, 153, 0.35); }
+    .node.violet  { border-color: rgba(167, 139, 250, 0.35); }
+    .node.amber   { border-color: rgba(251, 191, 36, 0.35); }
+    .node.rose    { border-color: rgba(251, 113, 133, 0.35); }
+
+    .node-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px; font-weight: 700;
+      color: #f1f5f9; margin-left: 16px;
+    }
+    .node-sub {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px; color: #94a3b8;
+      margin-top: 6px; margin-left: 16px;
+      line-height: 1.4;
+    }
+
+    /* Channels cluster (input) */
+    .channels {
+      grid-column: 1 / -1;
+      background: rgba(8, 51, 68, 0.45);
+      border: 1px dashed rgba(34, 211, 238, 0.4);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .channels-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: #22d3ee;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .channel-icons {
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .channel-icons span {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      color: #cbd5e1;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(34, 211, 238, 0.18);
+    }
+
+    /* Decision / Outcome cards span full width */
+    .node.full { grid-column: 1 / -1; }
+
+    /* Outcome split */
+    .outcomes {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    /* Arrows between rows */
+    .arrow-down {
+      grid-column: 1 / -1;
+      display: flex; justify-content: center;
+      height: 16px; align-items: center;
+    }
+    .arrow-down svg { width: 14px; height: 16px; }
+
+    /* =========================================================
+       TOOLBAR — for the user, not part of the screenshot
+       ========================================================= */
+    .toolbar {
+      max-width: 1280px;
+      margin: 18px auto 0;
+      padding: 14px 18px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .toolbar code {
+      color: #22d3ee;
+      background: rgba(34, 211, 238, 0.08);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .toolbar .steps { display: flex; gap: 18px; flex-wrap: wrap; }
+    .toolbar .steps span::before {
+      content: '›'; color: #475569; margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============== HERO / SOCIAL PREVIEW 1280x640 ============== -->
+  <div class="hero" id="hero">
+    <div class="hero-inner">
+
+      <!-- LEFT -->
+      <div class="left">
+        <div>
+          <div class="brand-row">
+            <div class="brand-mark">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+              </svg>
+            </div>
+            <div class="brand-name">n8n <span>·</span> AI Customer Support</div>
+          </div>
+
+          <h1 class="title">
+            Multi-channel <span class="grad">AI Support</span><br>
+            on n8n + RAG
+          </h1>
+
+          <p class="tag">
+            Webhooks → policy engine → RAG → validated response or human escalation.
+            Deterministic rules, real pgvector, idempotent by design.
+          </p>
+
+          <div class="badges">
+            <div class="badge"><span class="dot c-cyan"></span>7 channels</div>
+            <div class="badge"><span class="dot c-emerald"></span>15 intents</div>
+            <div class="badge"><span class="dot c-violet"></span>pgvector RAG</div>
+            <div class="badge"><span class="dot c-amber"></span>12 workflows</div>
+            <div class="badge"><span class="dot c-rose"></span>Idempotent</div>
+          </div>
+        </div>
+
+        <div class="meta-row">
+          <span>github.com/ibam28/customer-support-ai-automation-n8n</span>
+          <span class="sep"></span>
+          <span>Production-grade</span>
+          <span class="sep"></span>
+          <span class="ver">v1.0.0</span>
+        </div>
+      </div>
+
+      <!-- RIGHT — pipeline -->
+      <div class="right">
+        <div class="pipeline">
+
+          <div class="channels">
+            <div class="channels-label">▸ Inbound channels</div>
+            <div class="channel-icons">
+              <span>Website</span><span>WhatsApp</span><span>Telegram</span>
+              <span>Email</span><span>Slack</span><span>Instagram</span><span>Messenger</span>
+            </div>
+          </div>
+
+          <div class="arrow-down">
+            <svg viewBox="0 0 14 16" fill="none"><path d="M7 1v13M2 10l5 5 5-5" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+
+          <div class="node cyan full">
+            <div class="node-title">Validate · Sanitize · Idempotency</div>
+            <div class="node-sub">JSON schema · injection guard · SHA-256 dedupe</div>
+          </div>
+
+          <div class="arrow-down">
+            <svg viewBox="0 0 14 16" fill="none"><path d="M7 1v13M2 10l5 5 5-5" stroke="#34d399" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+
+          <div class="node emerald">
+            <div class="node-title">AI Agent</div>
+            <div class="node-sub">intent + sentiment + priority</div>
+          </div>
+
+          <div class="node violet">
+            <div class="node-title">Memory</div>
+            <div class="node-sub">conversation window + summary</div>
+          </div>
+
+          <div class="node amber">
+            <div class="node-title">Policy Engine</div>
+            <div class="node-sub">rule-based, not LLM-alone</div>
+          </div>
+
+          <div class="arrow-down">
+            <svg viewBox="0 0 14 16" fill="none"><path d="M7 1v13M2 10l5 5 5-5" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+
+          <div class="node violet full">
+            <div class="node-title">RAG Retrieval · pgvector</div>
+            <div class="node-sub">vector similarity + metadata filter + threshold</div>
+          </div>
+
+          <div class="arrow-down">
+            <svg viewBox="0 0 14 16" fill="none"><path d="M7 1v13M2 10l5 5 5-5" stroke="#fb7185" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+
+          <div class="outcomes">
+            <div class="node emerald">
+              <div class="node-title">✓ Auto-reply</div>
+              <div class="node-sub">validated, grounded</div>
+            </div>
+            <div class="node rose">
+              <div class="node-title">⚠ Escalate</div>
+              <div class="node-sub">human ticket + analytics</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============== TOOLBAR (bukan bagian dari hero) ============== -->
+  <div class="toolbar">
+    <div>
+      <strong style="color:#e2e8f0;">Cara pakai:</strong>
+      <span>Buka file ini di browser</span>
+      <span>Screenshot area <code>#hero</code> 1280×640</span>
+      <span>Upload PNG ke GitHub Social Preview</span>
+    </div>
+  </div>
+
+</body>
+</html>
